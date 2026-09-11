@@ -3,65 +3,68 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const server = http.createServer(app);
-const io = new Server(server, {
-    cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
-    }
-});
+const io = new Server(server, { cors: { origin: "*" } });
 
-// Connect to MongoDB Atlas (Prevents the Freefids daily wipe!)
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://demo:demo@cluster.mongodb.net/cchat?retryWrites=true&w=majority";
 
 mongoose.connect(MONGO_URI)
-    .then(() => console.log("Connected to Persistent MongoDB Atlas"))
+    .then(() => console.log("Connected to MongoDB Atlas"))
     .catch(err => console.error("MongoDB connection error:", err));
 
-// Message Schema so history is permanently saved
-const messageSchema = new mongoose.Schema({
-    username: String,
-    text: String,
-    timestamp: { type: Date, default: Date.now }
+const userSchema = new mongoose.Schema({
+    email: { type: String, unique: true, required: true },
+    passwordHash: { type: String, required: true },
+    username: { type: String, default: "" }
 });
-const Message = mongoose.model('Message', messageSchema);
+const User = mongoose.model('User', userSchema);
 
-app.get('/', (req, res) => {
-    res.send("CCalculator / CChat Persistent Backend is live!");
-});
+// Seed Accounts
+async function seedAccounts() {
+    const defaultUsers = [
+        { email: "x10zxc13@gmail.com", pass: "1223" },
+        { email: "cybernoxal@gmail.com", pass: "cndaniel" },
+        { email: "s3553@plc.qld.edu.au", pass: "s3553" }
+    ];
 
-// Fetch past messages on connection so nothing is lost
-io.on('connection', async (socket) => {
-    console.log(`User connected: ${socket.id}`);
-
-    try {
-        const pastMessages = await Message.find().sort({ timestamp: 1 }).limit(100);
-        socket.emit('load_history', pastMessages);
-    } catch (e) {
-        console.error("Error loading history:", e);
-    }
-
-    socket.on('send_message', async (data) => {
-        try {
-            const newMessage = new Message({ username: data.username, text: data.text });
-            await newMessage.save();
-            io.emit('receive_message', newMessage);
-        } catch (e) {
-            console.error("Error saving message:", e);
+    for (const u of defaultUsers) {
+        const exists = await User.findOne({ email: u.email });
+        if (!exists) {
+            const hash = await bcrypt.hash(u.pass, 10);
+            await new User({ email: u.email, passwordHash: hash }).save();
+            console.log(`Seeded account: ${u.email}`);
         }
-    });
+    }
+}
+mongoose.connection.once('open', seedAccounts);
 
-    socket.on('disconnect', () => {
-        console.log(`User disconnected: ${socket.id}`);
-    });
+// Authentication & Registration Endpoints
+app.post('/api/login', async (req, res) => {
+    const { email, password } = req.body;
+    const user = await User.findOne({ email });
+    if (!user) return res.status(401).json({ success: false, error: "Invalid credentials" });
+
+    const valid = await bcrypt.compare(password, user.passwordHash);
+    if (!valid) return res.status(401).json({ success: false, error: "Invalid credentials" });
+
+    res.json({ success: true, email: user.email, username: user.username });
+});
+
+app.post('/api/register', async (req, res) => {
+    const { email, password } = req.body;
+    const exists = await User.findOne({ email });
+    if (exists) return res.status(400).json({ success: false, error: "User exists" });
+
+    const hash = await bcrypt.hash(password, 10);
+    await new User({ email, passwordHash: hash }).save();
+    res.json({ success: true });
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`CChat server running on port ${PORT}`);
-});
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
