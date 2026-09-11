@@ -32,7 +32,7 @@ static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, voi
     return realsize;
 }
 
-// Native HTTP Call to Render API for Login or Registration
+// Fixed Native HTTP Call with Follow Redirects & SSL handling
 bool Network_Auth(const char* email, const char* password, bool is_signup) {
     CURL *curl_handle = curl_easy_init();
     if (!curl_handle) return false;
@@ -50,18 +50,56 @@ bool Network_Auth(const char* email, const char* password, bool is_signup) {
     curl_easy_setopt(curl_handle, CURLOPT_URL, full_url);
     curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, json_payload);
     curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L); // Follow HTTPS redirects
+    curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L); // Bypass local cert store mismatches
     curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
     curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
-    curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 6L);
+    curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 10L);
 
     CURLcode res = curl_easy_perform(curl_handle);
     bool success = false;
 
     if (res == CURLE_OK && chunk.memory) {
+        printf("Server Response: %s\n", chunk.memory);
         if (strstr(chunk.memory, "\"success\":true")) {
             success = true;
         }
+    } else {
+        printf("Curl Error: %s\n", curl_easy_strerror(res));
     }
+
+    curl_easy_cleanup(curl_handle);
+    curl_slist_free_all(headers);
+    if (chunk.memory) free(chunk.memory);
+
+    return success;
+}
+
+// Persist Selected Username to MongoDB Atlas
+bool Network_SetUsername(const char* email, const char* username) {
+    CURL *curl_handle = curl_easy_init();
+    if (!curl_handle) return false;
+
+    struct MemoryStruct chunk = { malloc(1), 0 };
+    char json_payload[512];
+    snprintf(json_payload, sizeof(json_payload), "{\"email\":\"%s\",\"username\":\"%s\"}", email, username);
+
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+
+    char full_url[256];
+    snprintf(full_url, sizeof(full_url), "%s/api/set-username", RENDER_URL);
+
+    curl_easy_setopt(curl_handle, CURLOPT_URL, full_url);
+    curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, json_payload);
+    curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
+
+    CURLcode res = curl_easy_perform(curl_handle);
+    bool success = (res == CURLE_OK);
 
     curl_easy_cleanup(curl_handle);
     curl_slist_free_all(headers);
@@ -81,7 +119,7 @@ int main() {
     AuthState auth = {0};
     auth.is_signup_mode = false;
     
-    int active_field = 0; // 0: Email, 1: Password
+    int active_field = 0;
     char msg_input[256] = "";
     char error_msg[128] = "";
 
@@ -89,7 +127,6 @@ int main() {
         float sw = GetScreenWidth();
         float sh = GetScreenHeight();
 
-        // Key Input Handling
         int key = GetCharPressed();
         while (key > 0) {
             if ((key >= 32) && (key <= 125)) {
@@ -132,7 +169,7 @@ int main() {
         }
 
         BeginDrawing();
-        ClearBackground((Color){11, 15, 23, 255}); // #0B0F17
+        ClearBackground((Color){11, 15, 23, 255});
 
         if (current_screen == SCREEN_LOGIN) {
             float card_w = 400;
@@ -145,13 +182,11 @@ int main() {
             DrawText("Welcome to CChat", card.x + 85, card.y + 35, 24, (Color){248, 250, 252, 255});
             DrawText(auth.is_signup_mode ? "Create a new account" : "Sign in to your account", card.x + 100, card.y + 70, 14, (Color){148, 163, 184, 255});
 
-            // Email Input Box
             Rectangle email_box = {card.x + 30, card.y + 110, 340, 45};
             DrawRectangleRounded(email_box, 0.2, 8, (Color){11, 15, 23, 255});
             DrawRectangleRoundedLines(email_box, 0.2, 8, (active_field == 0) ? (Color){37, 99, 235, 255} : (Color){30, 41, 59, 255});
             DrawText(strlen(auth.email) > 0 ? auth.email : "Email Address", email_box.x + 15, email_box.y + 14, 14, strlen(auth.email) > 0 ? (Color){248, 250, 252, 255} : (Color){100, 116, 139, 255});
 
-            // Password Input Box
             Rectangle pass_box = {card.x + 30, card.y + 175, 340, 45};
             DrawRectangleRounded(pass_box, 0.2, 8, (Color){11, 15, 23, 255});
             DrawRectangleRoundedLines(pass_box, 0.2, 8, (active_field == 1) ? (Color){37, 99, 235, 255} : (Color){30, 41, 59, 255});
@@ -164,14 +199,12 @@ int main() {
                 DrawText(error_msg, card.x + 30, card.y + 235, 13, (Color){239, 68, 68, 255});
             }
 
-            // Action Button (Log In / Create Account)
             Rectangle btn = {card.x + 30, card.y + 265, 340, 48};
             Vector2 mouse = GetMousePosition();
             bool hover = CheckCollisionPointRec(mouse, btn);
             DrawRectangleRounded(btn, 0.2, 8, hover ? (Color){29, 78, 216, 255} : (Color){37, 99, 235, 255});
             DrawText(auth.is_signup_mode ? "Create Account" : "Log In", btn.x + (auth.is_signup_mode ? 110 : 140), btn.y + 14, 16, (Color){255, 255, 255, 255});
 
-            // Toggle Mode Link (Login vs Sign Up)
             Rectangle toggle_btn = {card.x + 30, card.y + 330, 340, 30};
             bool toggle_hover = CheckCollisionPointRec(mouse, toggle_btn);
             DrawText(auth.is_signup_mode ? "Already have an account? Log In" : "Don't have an account? Sign Up", card.x + 65, card.y + 335, 13, toggle_hover ? (Color){37, 99, 235, 255} : (Color){148, 163, 184, 255});
@@ -214,12 +247,12 @@ int main() {
 
             if ((CheckCollisionPointRec(GetMousePosition(), btn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) || IsKeyPressed(KEY_ENTER)) {
                 if (strlen(auth.username) > 0) {
+                    Network_SetUsername(auth.email, auth.username);
                     current_screen = SCREEN_CHAT;
                 }
             }
 
         } else if (current_screen == SCREEN_CHAT) {
-            // Active Chat View
             DrawRectangle(0, 0, 68, sh, (Color){15, 23, 42, 255});
             DrawRectangle(68, 0, 280, sh, (Color){17, 24, 39, 255});
             
