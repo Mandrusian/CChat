@@ -32,6 +32,7 @@ static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, voi
     return realsize;
 }
 
+// Strict JSON Response Inspector
 bool Network_Auth(const char* email, const char* password, bool is_signup) {
     CURL *curl_handle = curl_easy_init();
     if (!curl_handle) return false;
@@ -59,6 +60,7 @@ bool Network_Auth(const char* email, const char* password, bool is_signup) {
     bool success = false;
 
     if (res == CURLE_OK && chunk.memory) {
+        // Strict check for "success":true vs "success":false
         if (strstr(chunk.memory, "\"success\":true")) {
             success = true;
         }
@@ -89,7 +91,6 @@ int main() {
         float sw = GetScreenWidth();
         float sh = GetScreenHeight();
 
-        // Fixed ASCII & Number Input Capture
         int key = GetCharPressed();
         while (key > 0) {
             if ((key >= 32) && (key <= 126)) {
@@ -183,7 +184,7 @@ int main() {
                         current_screen = SCREEN_SET_USERNAME;
                         strcpy(error_msg, "");
                     } else {
-                        strcpy(error_msg, auth.is_signup_mode ? "User exists or server error" : "Invalid credentials or server offline");
+                        strcpy(error_msg, auth.is_signup_mode ? "Account exists! Click Log In." : "Invalid credentials.");
                     }
                 }
             }
