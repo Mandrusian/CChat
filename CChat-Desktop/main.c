@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <curl/curl.h>
 
-#define RENDER_URL "https://cchat-backend.onrender.com"
+#define RENDER_URL "https://cchat-backend-002b.onrender.com"
 
 typedef enum { SCREEN_LOGIN, SCREEN_SET_USERNAME, SCREEN_CHAT } AppScreen;
 
@@ -14,6 +14,15 @@ typedef struct {
     char username[128];
     bool is_signup_mode;
 } AuthState;
+
+typedef struct {
+    char active_recipient[128];
+    char active_recipient_email[128];
+    bool show_new_chat_modal;
+    char search_query[128];
+    char suggestions[5][128];
+    int suggestion_count;
+} ChatState;
 
 struct MemoryStruct {
     char *memory;
@@ -32,7 +41,7 @@ static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, voi
     return realsize;
 }
 
-char raw_server_log[256] = "Server status: Idle";
+char raw_server_log[256] = "Server status: Ready";
 
 bool Network_Auth(const char* email, const char* password, bool is_signup) {
     CURL *curl_handle = curl_easy_init();
@@ -55,7 +64,7 @@ bool Network_Auth(const char* email, const char* password, bool is_signup) {
     curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
     curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
-    curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 15L);
+    curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 10L);
 
     CURLcode res = curl_easy_perform(curl_handle);
     bool success = false;
@@ -76,6 +85,30 @@ bool Network_Auth(const char* email, const char* password, bool is_signup) {
     return success;
 }
 
+// Snappy Key-Repeat Buffer Backspace
+void HandleTextInput(char *buffer, int max_len, float *backspace_timer) {
+    int key = GetCharPressed();
+    while (key > 0) {
+        if ((key >= 32) && (key <= 126) && (int)strlen(buffer) < max_len - 1) {
+            int len = strlen(buffer);
+            buffer[len] = (char)key;
+            buffer[len + 1] = '\0';
+        }
+        key = GetCharPressed();
+    }
+
+    if (IsKeyDown(KEY_BACKSPACE)) {
+        *backspace_timer += GetFrameTime();
+        if (IsKeyPressed(KEY_BACKSPACE) || *backspace_timer > 0.3f) {
+            int len = strlen(buffer);
+            if (len > 0) buffer[len - 1] = '\0';
+            if (*backspace_timer > 0.3f) *backspace_timer = 0.25f; // Fast repeat
+        }
+    } else {
+        *backspace_timer = 0.0f;
+    }
+}
+
 int main() {
     curl_global_init(CURL_GLOBAL_ALL);
     SetConfigFlags(FLAG_WINDOW_HIGHDPI | FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE);
@@ -83,43 +116,31 @@ int main() {
     SetWindowMinSize(900, 600);
     SetTargetFPS(60);
 
-    AppScreen current_screen = SCREEN_LOGIN;
-    AuthState auth = {0};
+    AppScreen current_screen = SCREEN_CHAT; // Resume directly into active stage
+    AuthState auth = { "x10zxc13@gmail.com", "1223", "Xavi", false };
+    ChatState chat = { "Alex", "alex@cchat.io", false, "", { "cybernoxal@gmail.com", "s3553@plc.qld.edu.au" }, 2 };
+
     int active_field = 0;
     char msg_input[256] = "";
+    float backspace_timer = 0.0f;
+    float cursor_blink = 0.0f;
 
     while (!WindowShouldClose()) {
         float sw = GetScreenWidth();
         float sh = GetScreenHeight();
+        cursor_blink += GetFrameTime();
+        bool show_cursor = ((int)(cursor_blink * 2.5f) % 2) == 0;
 
-        int key = GetCharPressed();
-        while (key > 0) {
-            if ((key >= 32) && (key <= 126)) {
-                if (current_screen == SCREEN_LOGIN) {
-                    if (active_field == 0 && strlen(auth.email) < 120) {
-                        int len = strlen(auth.email);
-                        auth.email[len] = (char)key;
-                        auth.email[len + 1] = '\0';
-                    } else if (active_field == 1 && strlen(auth.password) < 120) {
-                        int len = strlen(auth.password);
-                        auth.password[len] = (char)key;
-                        auth.password[len + 1] = '\0';
-                    }
-                } else if (current_screen == SCREEN_SET_USERNAME && strlen(auth.username) < 120) {
-                    int len = strlen(auth.username);
-                    auth.username[len] = (char)key;
-                    auth.username[len + 1] = '\0';
-                }
-            }
-            key = GetCharPressed();
-        }
-
-        if (IsKeyPressed(KEY_BACKSPACE)) {
-            if (current_screen == SCREEN_LOGIN) {
-                if (active_field == 0 && strlen(auth.email) > 0) auth.email[strlen(auth.email) - 1] = '\0';
-                if (active_field == 1 && strlen(auth.password) > 0) auth.password[strlen(auth.password) - 1] = '\0';
-            } else if (current_screen == SCREEN_SET_USERNAME && strlen(auth.username) > 0) {
-                auth.username[strlen(auth.username) - 1] = '\0';
+        // Input processing
+        if (current_screen == SCREEN_LOGIN) {
+            HandleTextInput(active_field == 0 ? auth.email : auth.password, 120, &backspace_timer);
+        } else if (current_screen == SCREEN_SET_USERNAME) {
+            HandleTextInput(auth.username, 120, &backspace_timer);
+        } else if (current_screen == SCREEN_CHAT) {
+            if (chat.show_new_chat_modal) {
+                HandleTextInput(chat.search_query, 120, &backspace_timer);
+            } else {
+                HandleTextInput(msg_input, 240, &backspace_timer);
             }
         }
 
@@ -128,95 +149,108 @@ int main() {
         }
 
         BeginDrawing();
-        ClearBackground((Color){11, 15, 23, 255});
+        ClearBackground((Color){11, 15, 23, 255}); // Surface 0 (#0B0F17)
 
-        if (current_screen == SCREEN_LOGIN) {
-            float card_w = 440;
-            float card_h = 460;
-            Rectangle card = {(sw - card_w) / 2, (sh - card_h) / 2, card_w, card_h};
-            
-            DrawRectangleRounded(card, 0.08, 8, (Color){15, 23, 42, 255});
-            DrawRectangleRoundedLines(card, 0.08, 8, (Color){30, 41, 59, 255});
+        if (current_screen == SCREEN_CHAT) {
+            // Rail Column (Width: 68)
+            DrawRectangle(0, 0, 68, sh, (Color){15, 23, 42, 255});
+            DrawRectangle(67, 0, 1, sh, (Color){30, 41, 59, 255});
 
-            DrawText("Welcome to CChat", card.x + 105, card.y + 30, 24, (Color){248, 250, 252, 255});
-            DrawText(auth.is_signup_mode ? "Create a new account" : "Sign in to your account", card.x + 120, card.y + 65, 14, (Color){148, 163, 184, 255});
+            DrawCircle(34, 40, 20, (Color){37, 99, 235, 255});
+            DrawText("C", 27, 28, 22, WHITE);
 
-            Rectangle email_box = {card.x + 30, card.y + 105, 380, 45};
-            DrawRectangleRounded(email_box, 0.2, 8, (Color){11, 15, 23, 255});
-            DrawRectangleRoundedLines(email_box, 0.2, 8, (active_field == 0) ? (Color){37, 99, 235, 255} : (Color){30, 41, 59, 255});
-            DrawText(strlen(auth.email) > 0 ? auth.email : "Email Address", email_box.x + 15, email_box.y + 14, 14, strlen(auth.email) > 0 ? (Color){248, 250, 252, 255} : (Color){100, 116, 139, 255});
+            // Secondary List Panel (Width: 280)
+            DrawRectangle(68, 0, 280, sh, (Color){17, 24, 39, 255});
+            DrawRectangle(347, 0, 1, sh, (Color){30, 41, 59, 255});
 
-            Rectangle pass_box = {card.x + 30, card.y + 165, 380, 45};
-            DrawRectangleRounded(pass_box, 0.2, 8, (Color){11, 15, 23, 255});
-            DrawRectangleRoundedLines(pass_box, 0.2, 8, (active_field == 1) ? (Color){37, 99, 235, 255} : (Color){30, 41, 59, 255});
-            
-            char pass_mask[128] = "";
-            for (size_t i = 0; i < strlen(auth.password); i++) strcat(pass_mask, "*");
-            DrawText(strlen(auth.password) > 0 ? pass_mask : "Password", pass_box.x + 15, pass_box.y + 14, 14, strlen(auth.password) > 0 ? (Color){248, 250, 252, 255} : (Color){100, 116, 139, 255});
+            DrawText("Messages", 84, 20, 18, (Color){248, 250, 252, 255});
 
-            DrawRectangleRounded((Rectangle){card.x + 30, card.y + 220, 380, 35}, 0.2, 8, (Color){2, 6, 23, 255});
-            DrawText(raw_server_log, card.x + 40, card.y + 230, 11, (Color){56, 189, 248, 255});
+            // New Chat '+' Action Button
+            Rectangle add_btn = {308, 16, 28, 28};
+            bool add_hover = CheckCollisionPointRec(GetMousePosition(), add_btn);
+            DrawRectangleRounded(add_btn, 0.3, 8, add_hover ? (Color){37, 99, 235, 255} : (Color){30, 41, 59, 255});
+            DrawText("+", add_btn.x + 8, add_btn.y + 4, 20, WHITE);
 
-            Rectangle btn = {card.x + 30, card.y + 270, 380, 48};
-            Vector2 mouse = GetMousePosition();
-            bool hover = CheckCollisionPointRec(mouse, btn);
-            DrawRectangleRounded(btn, 0.2, 8, hover ? (Color){29, 78, 216, 255} : (Color){37, 99, 235, 255});
-            DrawText(auth.is_signup_mode ? "Create Account" : "Log In", btn.x + (auth.is_signup_mode ? 130 : 160), btn.y + 14, 16, (Color){255, 255, 255, 255});
-
-            Rectangle toggle_btn = {card.x + 30, card.y + 335, 380, 30};
-            bool toggle_hover = CheckCollisionPointRec(mouse, toggle_btn);
-            DrawText(auth.is_signup_mode ? "Already have an account? Log In" : "Don't have an account? Sign Up", card.x + 85, card.y + 340, 13, toggle_hover ? (Color){37, 99, 235, 255} : (Color){148, 163, 184, 255});
-
-            if (toggle_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                auth.is_signup_mode = !auth.is_signup_mode;
+            if (add_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                chat.show_new_chat_modal = true;
+                strcpy(chat.search_query, "");
             }
 
-            if ((hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) || IsKeyPressed(KEY_ENTER)) {
-                if (strlen(auth.email) > 0 && strlen(auth.password) > 0) {
-                    snprintf(raw_server_log, sizeof(raw_server_log), "Connecting to Render...");
-                    if (Network_Auth(auth.email, auth.password, auth.is_signup_mode)) {
-                        current_screen = SCREEN_SET_USERNAME;
+            // Chat Item Row
+            Rectangle item_rect = {76, 60, 264, 56};
+            DrawRectangleRounded(item_rect, 0.15, 8, (Color){30, 41, 59, 255});
+            DrawCircle(104, 88, 16, (Color){37, 99, 235, 255});
+            DrawText("A", 99, 79, 16, WHITE);
+            DrawText(chat.active_recipient, 130, 72, 14, (Color){248, 250, 252, 255});
+            DrawText("Active channel", 130, 90, 12, (Color){148, 163, 184, 255});
+
+            // Main Active Stage Column
+            float stage_x = 348;
+            float stage_w = sw - stage_x;
+
+            // Header
+            DrawRectangle(stage_x, 0, stage_w, 64, (Color){15, 23, 42, 255});
+            DrawRectangle(stage_x, 63, stage_w, 1, (Color){30, 41, 59, 255});
+
+            DrawText(chat.active_recipient, stage_x + 24, 16, 16, (Color){248, 250, 252, 255});
+            DrawText("Authenticated as:", stage_x + 24, 36, 12, (Color){148, 163, 184, 255});
+            DrawText(auth.username, stage_x + 130, 36, 12, (Color){37, 99, 235, 255});
+
+            // Active Message Input Field
+            Rectangle input_box = {stage_x + 20, sh - 55, stage_w - 90, 40};
+            DrawRectangleRounded(input_box, 0.2, 8, (Color){15, 23, 42, 255});
+            DrawRectangleRoundedLines(input_box, 0.2, 8, (Color){30, 41, 59, 255});
+
+            char render_msg[280];
+            snprintf(render_msg, sizeof(render_msg), "%s%s", msg_input, (!chat.show_new_chat_modal && show_cursor) ? "_" : "");
+            DrawText(strlen(msg_input) > 0 ? render_msg : "Write a message...", input_box.x + 15, input_box.y + 12, 14, strlen(msg_input) > 0 ? (Color){248, 250, 252, 255} : (Color){100, 116, 139, 255});
+
+            // New Chat Modal Overlay (Gmail-style Autofill)
+            if (chat.show_new_chat_modal) {
+                DrawRectangle(0, 0, sw, sh, (Color){0, 0, 0, 180}); // Dark backdrop
+
+                float m_w = 460;
+                float m_h = 320;
+                Rectangle modal = {(sw - m_w) / 2, (sh - m_h) / 2, m_w, m_h};
+
+                DrawRectangleRounded(modal, 0.08, 8, (Color){15, 23, 42, 255});
+                DrawRectangleRoundedLines(modal, 0.08, 8, (Color){30, 41, 59, 255});
+
+                DrawText("New Conversation", modal.x + 24, modal.y + 20, 18, (Color){248, 250, 252, 255});
+                
+                // Close button 'x'
+                Rectangle close_btn = {modal.x + m_w - 36, modal.y + 18, 20, 20};
+                if (CheckCollisionPointRec(GetMousePosition(), close_btn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                    chat.show_new_chat_modal = false;
+                }
+                DrawText("X", close_btn.x + 4, close_btn.y + 2, 14, (Color){148, 163, 184, 255});
+
+                // Recipient Search Input Bar
+                Rectangle s_box = {modal.x + 24, modal.y + 55, m_w - 48, 42};
+                DrawRectangleRounded(s_box, 0.2, 8, (Color){11, 15, 23, 255});
+                DrawRectangleRoundedLines(s_box, 0.2, 8, (Color){37, 99, 235, 255});
+
+                char query_render[140];
+                snprintf(query_render, sizeof(query_render), "%s%s", chat.search_query, show_cursor ? "_" : "");
+                DrawText(strlen(chat.search_query) > 0 ? query_render : "To: Type email address...", s_box.x + 12, s_box.y + 13, 14, strlen(chat.search_query) > 0 ? WHITE : (Color){100, 116, 139, 255});
+
+                // Autofill Suggestions Dropdown
+                DrawText("SUGGESTED CONTACTS", modal.x + 24, modal.y + 112, 11, (Color){100, 116, 139, 255});
+
+                for (int i = 0; i < chat.suggestion_count; i++) {
+                    Rectangle sug_item = {modal.x + 24, modal.y + 132 + (i * 44), m_w - 48, 38};
+                    bool s_hover = CheckCollisionPointRec(GetMousePosition(), sug_item);
+                    DrawRectangleRounded(sug_item, 0.2, 8, s_hover ? (Color){30, 41, 59, 255} : (Color){17, 24, 39, 255});
+                    
+                    DrawCircle(sug_item.x + 20, sug_item.y + 19, 10, (Color){37, 99, 235, 255});
+                    DrawText(chat.suggestions[i], sug_item.x + 40, sug_item.y + 11, 13, (Color){248, 250, 252, 255});
+
+                    if (s_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                        strcpy(chat.active_recipient, chat.suggestions[i]);
+                        chat.show_new_chat_modal = false;
                     }
                 }
             }
-
-        } else if (current_screen == SCREEN_SET_USERNAME) {
-            float card_w = 400;
-            float card_h = 300;
-            Rectangle card = {(sw - card_w) / 2, (sh - card_h) / 2, card_w, card_h};
-            
-            DrawRectangleRounded(card, 0.08, 8, (Color){15, 23, 42, 255});
-            DrawRectangleRoundedLines(card, 0.08, 8, (Color){30, 41, 59, 255});
-
-            DrawText("Choose Display Name", card.x + 80, card.y + 35, 22, (Color){248, 250, 252, 255});
-            DrawText("Set your username for CChat", card.x + 105, card.y + 65, 14, (Color){148, 163, 184, 255});
-
-            Rectangle uname_box = {card.x + 30, card.y + 115, 340, 45};
-            DrawRectangleRounded(uname_box, 0.2, 8, (Color){11, 15, 23, 255});
-            DrawRectangleRoundedLines(uname_box, 0.2, 8, (Color){37, 99, 235, 255});
-            DrawText(strlen(auth.username) > 0 ? auth.username : "Enter Username...", uname_box.x + 15, uname_box.y + 14, 14, strlen(auth.username) > 0 ? (Color){248, 250, 252, 255} : (Color){100, 116, 139, 255});
-
-            Rectangle btn = {card.x + 30, card.y + 190, 340, 48};
-            DrawRectangleRounded(btn, 0.2, 8, (Color){37, 99, 235, 255});
-            DrawText("Continue to CChat", btn.x + 105, btn.y + 14, 16, (Color){255, 255, 255, 255});
-
-            if ((CheckCollisionPointRec(GetMousePosition(), btn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) || IsKeyPressed(KEY_ENTER)) {
-                if (strlen(auth.username) > 0) {
-                    current_screen = SCREEN_CHAT;
-                }
-            }
-
-        } else if (current_screen == SCREEN_CHAT) {
-            DrawRectangle(0, 0, 68, sh, (Color){15, 23, 42, 255});
-            DrawRectangle(68, 0, 280, sh, (Color){17, 24, 39, 255});
-            
-            float stage_x = 348;
-            float stage_w = sw - stage_x;
-            DrawRectangle(stage_x, 0, stage_w, 64, (Color){15, 23, 42, 255});
-
-            DrawText("CChat Live Channel", stage_x + 24, 16, 16, (Color){248, 250, 252, 255});
-            DrawText("Authenticated as:", stage_x + 24, 36, 12, (Color){148, 163, 184, 255});
-            DrawText(auth.username, stage_x + 130, 36, 12, (Color){37, 99, 235, 255});
         }
 
         EndDrawing();
