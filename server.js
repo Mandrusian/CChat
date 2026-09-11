@@ -1,6 +1,5 @@
 const express = require('express');
 const http = require('http');
-const { Server } = require('socket.io');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
@@ -10,7 +9,6 @@ app.use(cors());
 app.use(express.json());
 
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
 
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://demo:demo@cluster.mongodb.net/cchat?retryWrites=true&w=majority";
 
@@ -18,58 +16,67 @@ mongoose.connect(MONGO_URI)
     .then(() => console.log("Connected to MongoDB Atlas"))
     .catch(err => console.error("MongoDB connection error:", err));
 
+// Schemas
 const userSchema = new mongoose.Schema({
     email: { type: String, unique: true, required: true },
     passwordHash: { type: String, required: true },
     username: { type: String, default: "" }
 });
+
+const threadSchema = new mongoose.Schema({
+    isGroup: { type: Boolean, default: false },
+    groupName: { type: String, default: "" },
+    participants: [{ type: String }], // Array of emails
+    lastMessageAt: { type: Date, default: Date.now }
+});
+
+const messageSchema = new mongoose.Schema({
+    threadId: { type: mongoose.Schema.Types.ObjectId, ref: 'Thread', required: true },
+    senderEmail: { type: String, required: true },
+    text: { type: String, required: true },
+    timestamp: { type: Date, default: Date.now }
+});
+
 const User = mongoose.model('User', userSchema);
+const Thread = mongoose.model('Thread', threadSchema);
+const Message = mongoose.model('Message', messageSchema);
 
-// Seed Accounts
-async function seedAccounts() {
-    const defaultUsers = [
-        { email: "x10zxc13@gmail.com", pass: "1223" },
-        { email: "cybernoxal@gmail.com", pass: "cndaniel" },
-        { email: "s3553@plc.qld.edu.au", pass: "s3553" }
-    ];
-
-    for (const u of defaultUsers) {
-        const exists = await User.findOne({ email: u.email });
-        if (!exists) {
-            const hash = await bcrypt.hash(u.pass, 10);
-            await new User({ email: u.email, passwordHash: hash }).save();
-            console.log(`Seeded account: ${u.email}`);
-        }
-    }
-}
-mongoose.connection.once('open', seedAccounts);
-
-// Standardized Routes (Support both /login and /api/login)
+// Auth Routes
 const handleLogin = async (req, res) => {
     const { email, password } = req.body;
     const user = await User.findOne({ email });
-    if (!user) return res.status(401).json({ success: false, error: "Invalid credentials" });
-
-    const valid = await bcrypt.compare(password, user.passwordHash);
-    if (!valid) return res.status(401).json({ success: false, error: "Invalid credentials" });
-
+    if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+        return res.status(401).json({ success: false, error: "Invalid credentials" });
+    }
     res.json({ success: true, email: user.email, username: user.username });
 };
 
 const handleRegister = async (req, res) => {
     const { email, password } = req.body;
-    const exists = await User.findOne({ email });
-    if (exists) return res.status(400).json({ success: false, error: "User exists" });
-
+    if (await User.findOne({ email })) return res.status(400).json({ success: false, error: "User exists" });
     const hash = await bcrypt.hash(password, 10);
     await new User({ email, passwordHash: hash }).save();
     res.json({ success: true });
 };
 
-app.post('/login', handleLogin);
 app.post('/api/login', handleLogin);
-app.post('/register', handleRegister);
 app.post('/api/register', handleRegister);
+
+// Chat Routes
+app.post('/api/threads/create', async (req, res) => {
+    const { isGroup, groupName, participants } = req.body;
+    const thread = new Thread({ isGroup, groupName, participants });
+    await thread.save();
+    res.json({ success: true, threadId: thread._id });
+});
+
+app.post('/api/messages/send', async (req, res) => {
+    const { threadId, senderEmail, text } = req.body;
+    const msg = new Message({ threadId, senderEmail, text });
+    await msg.save();
+    await Thread.findByIdAndUpdate(threadId, { lastMessageAt: Date.now() });
+    res.json({ success: true, message: msg });
+});
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
