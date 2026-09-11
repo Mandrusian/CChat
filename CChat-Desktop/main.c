@@ -32,7 +32,6 @@ static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, voi
     return realsize;
 }
 
-// Fixed Native HTTP Call with Follow Redirects & SSL handling
 bool Network_Auth(const char* email, const char* password, bool is_signup) {
     CURL *curl_handle = curl_easy_init();
     if (!curl_handle) return false;
@@ -50,8 +49,8 @@ bool Network_Auth(const char* email, const char* password, bool is_signup) {
     curl_easy_setopt(curl_handle, CURLOPT_URL, full_url);
     curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, json_payload);
     curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L); // Follow HTTPS redirects
-    curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L); // Bypass local cert store mismatches
+    curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
     curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
     curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 10L);
@@ -60,46 +59,10 @@ bool Network_Auth(const char* email, const char* password, bool is_signup) {
     bool success = false;
 
     if (res == CURLE_OK && chunk.memory) {
-        printf("Server Response: %s\n", chunk.memory);
         if (strstr(chunk.memory, "\"success\":true")) {
             success = true;
         }
-    } else {
-        printf("Curl Error: %s\n", curl_easy_strerror(res));
     }
-
-    curl_easy_cleanup(curl_handle);
-    curl_slist_free_all(headers);
-    if (chunk.memory) free(chunk.memory);
-
-    return success;
-}
-
-// Persist Selected Username to MongoDB Atlas
-bool Network_SetUsername(const char* email, const char* username) {
-    CURL *curl_handle = curl_easy_init();
-    if (!curl_handle) return false;
-
-    struct MemoryStruct chunk = { malloc(1), 0 };
-    char json_payload[512];
-    snprintf(json_payload, sizeof(json_payload), "{\"email\":\"%s\",\"username\":\"%s\"}", email, username);
-
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-
-    char full_url[256];
-    snprintf(full_url, sizeof(full_url), "%s/api/set-username", RENDER_URL);
-
-    curl_easy_setopt(curl_handle, CURLOPT_URL, full_url);
-    curl_easy_setopt(curl_handle, CURLOPT_POSTFIELDS, json_payload);
-    curl_easy_setopt(curl_handle, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl_handle, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L);
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
-    curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
-
-    CURLcode res = curl_easy_perform(curl_handle);
-    bool success = (res == CURLE_OK);
 
     curl_easy_cleanup(curl_handle);
     curl_slist_free_all(headers);
@@ -117,7 +80,6 @@ int main() {
 
     AppScreen current_screen = SCREEN_LOGIN;
     AuthState auth = {0};
-    auth.is_signup_mode = false;
     
     int active_field = 0;
     char msg_input[256] = "";
@@ -127,9 +89,10 @@ int main() {
         float sw = GetScreenWidth();
         float sh = GetScreenHeight();
 
+        // Fixed ASCII & Number Input Capture
         int key = GetCharPressed();
         while (key > 0) {
-            if ((key >= 32) && (key <= 125)) {
+            if ((key >= 32) && (key <= 126)) {
                 if (current_screen == SCREEN_LOGIN) {
                     if (active_field == 0 && strlen(auth.email) < 120) {
                         int len = strlen(auth.email);
@@ -247,7 +210,6 @@ int main() {
 
             if ((CheckCollisionPointRec(GetMousePosition(), btn) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) || IsKeyPressed(KEY_ENTER)) {
                 if (strlen(auth.username) > 0) {
-                    Network_SetUsername(auth.email, auth.username);
                     current_screen = SCREEN_CHAT;
                 }
             }
