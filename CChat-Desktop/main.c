@@ -32,7 +32,8 @@ static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, voi
     return realsize;
 }
 
-// Strict JSON Response Inspector
+char raw_server_log[256] = "Server status: Idle";
+
 bool Network_Auth(const char* email, const char* password, bool is_signup) {
     CURL *curl_handle = curl_easy_init();
     if (!curl_handle) return false;
@@ -54,16 +55,18 @@ bool Network_Auth(const char* email, const char* password, bool is_signup) {
     curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
     curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
-    curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 10L);
+    curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 15L);
 
     CURLcode res = curl_easy_perform(curl_handle);
     bool success = false;
 
     if (res == CURLE_OK && chunk.memory) {
-        // Strict check for "success":true vs "success":false
+        snprintf(raw_server_log, sizeof(raw_server_log), "RESP: %s", chunk.memory);
         if (strstr(chunk.memory, "\"success\":true")) {
             success = true;
         }
+    } else {
+        snprintf(raw_server_log, sizeof(raw_server_log), "ERR: %s", curl_easy_strerror(res));
     }
 
     curl_easy_cleanup(curl_handle);
@@ -82,10 +85,8 @@ int main() {
 
     AppScreen current_screen = SCREEN_LOGIN;
     AuthState auth = {0};
-    
     int active_field = 0;
     char msg_input[256] = "";
-    char error_msg[128] = "";
 
     while (!WindowShouldClose()) {
         float sw = GetScreenWidth();
@@ -108,10 +109,6 @@ int main() {
                     int len = strlen(auth.username);
                     auth.username[len] = (char)key;
                     auth.username[len + 1] = '\0';
-                } else if (current_screen == SCREEN_CHAT && strlen(msg_input) < 250) {
-                    int len = strlen(msg_input);
-                    msg_input[len] = (char)key;
-                    msg_input[len + 1] = '\0';
                 }
             }
             key = GetCharPressed();
@@ -123,8 +120,6 @@ int main() {
                 if (active_field == 1 && strlen(auth.password) > 0) auth.password[strlen(auth.password) - 1] = '\0';
             } else if (current_screen == SCREEN_SET_USERNAME && strlen(auth.username) > 0) {
                 auth.username[strlen(auth.username) - 1] = '\0';
-            } else if (current_screen == SCREEN_CHAT && strlen(msg_input) > 0) {
-                msg_input[strlen(msg_input) - 1] = '\0';
             }
         }
 
@@ -136,22 +131,22 @@ int main() {
         ClearBackground((Color){11, 15, 23, 255});
 
         if (current_screen == SCREEN_LOGIN) {
-            float card_w = 400;
-            float card_h = 440;
+            float card_w = 440;
+            float card_h = 460;
             Rectangle card = {(sw - card_w) / 2, (sh - card_h) / 2, card_w, card_h};
             
             DrawRectangleRounded(card, 0.08, 8, (Color){15, 23, 42, 255});
             DrawRectangleRoundedLines(card, 0.08, 8, (Color){30, 41, 59, 255});
 
-            DrawText("Welcome to CChat", card.x + 85, card.y + 35, 24, (Color){248, 250, 252, 255});
-            DrawText(auth.is_signup_mode ? "Create a new account" : "Sign in to your account", card.x + 100, card.y + 70, 14, (Color){148, 163, 184, 255});
+            DrawText("Welcome to CChat", card.x + 105, card.y + 30, 24, (Color){248, 250, 252, 255});
+            DrawText(auth.is_signup_mode ? "Create a new account" : "Sign in to your account", card.x + 120, card.y + 65, 14, (Color){148, 163, 184, 255});
 
-            Rectangle email_box = {card.x + 30, card.y + 110, 340, 45};
+            Rectangle email_box = {card.x + 30, card.y + 105, 380, 45};
             DrawRectangleRounded(email_box, 0.2, 8, (Color){11, 15, 23, 255});
             DrawRectangleRoundedLines(email_box, 0.2, 8, (active_field == 0) ? (Color){37, 99, 235, 255} : (Color){30, 41, 59, 255});
             DrawText(strlen(auth.email) > 0 ? auth.email : "Email Address", email_box.x + 15, email_box.y + 14, 14, strlen(auth.email) > 0 ? (Color){248, 250, 252, 255} : (Color){100, 116, 139, 255});
 
-            Rectangle pass_box = {card.x + 30, card.y + 175, 340, 45};
+            Rectangle pass_box = {card.x + 30, card.y + 165, 380, 45};
             DrawRectangleRounded(pass_box, 0.2, 8, (Color){11, 15, 23, 255});
             DrawRectangleRoundedLines(pass_box, 0.2, 8, (active_field == 1) ? (Color){37, 99, 235, 255} : (Color){30, 41, 59, 255});
             
@@ -159,32 +154,28 @@ int main() {
             for (size_t i = 0; i < strlen(auth.password); i++) strcat(pass_mask, "*");
             DrawText(strlen(auth.password) > 0 ? pass_mask : "Password", pass_box.x + 15, pass_box.y + 14, 14, strlen(auth.password) > 0 ? (Color){248, 250, 252, 255} : (Color){100, 116, 139, 255});
 
-            if (strlen(error_msg) > 0) {
-                DrawText(error_msg, card.x + 30, card.y + 235, 13, (Color){239, 68, 68, 255});
-            }
+            DrawRectangleRounded((Rectangle){card.x + 30, card.y + 220, 380, 35}, 0.2, 8, (Color){2, 6, 23, 255});
+            DrawText(raw_server_log, card.x + 40, card.y + 230, 11, (Color){56, 189, 248, 255});
 
-            Rectangle btn = {card.x + 30, card.y + 265, 340, 48};
+            Rectangle btn = {card.x + 30, card.y + 270, 380, 48};
             Vector2 mouse = GetMousePosition();
             bool hover = CheckCollisionPointRec(mouse, btn);
             DrawRectangleRounded(btn, 0.2, 8, hover ? (Color){29, 78, 216, 255} : (Color){37, 99, 235, 255});
-            DrawText(auth.is_signup_mode ? "Create Account" : "Log In", btn.x + (auth.is_signup_mode ? 110 : 140), btn.y + 14, 16, (Color){255, 255, 255, 255});
+            DrawText(auth.is_signup_mode ? "Create Account" : "Log In", btn.x + (auth.is_signup_mode ? 130 : 160), btn.y + 14, 16, (Color){255, 255, 255, 255});
 
-            Rectangle toggle_btn = {card.x + 30, card.y + 330, 340, 30};
+            Rectangle toggle_btn = {card.x + 30, card.y + 335, 380, 30};
             bool toggle_hover = CheckCollisionPointRec(mouse, toggle_btn);
-            DrawText(auth.is_signup_mode ? "Already have an account? Log In" : "Don't have an account? Sign Up", card.x + 65, card.y + 335, 13, toggle_hover ? (Color){37, 99, 235, 255} : (Color){148, 163, 184, 255});
+            DrawText(auth.is_signup_mode ? "Already have an account? Log In" : "Don't have an account? Sign Up", card.x + 85, card.y + 340, 13, toggle_hover ? (Color){37, 99, 235, 255} : (Color){148, 163, 184, 255});
 
             if (toggle_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                 auth.is_signup_mode = !auth.is_signup_mode;
-                strcpy(error_msg, "");
             }
 
             if ((hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) || IsKeyPressed(KEY_ENTER)) {
                 if (strlen(auth.email) > 0 && strlen(auth.password) > 0) {
+                    snprintf(raw_server_log, sizeof(raw_server_log), "Connecting to Render...");
                     if (Network_Auth(auth.email, auth.password, auth.is_signup_mode)) {
                         current_screen = SCREEN_SET_USERNAME;
-                        strcpy(error_msg, "");
-                    } else {
-                        strcpy(error_msg, auth.is_signup_mode ? "Account exists! Click Log In." : "Invalid credentials.");
                     }
                 }
             }
@@ -226,10 +217,6 @@ int main() {
             DrawText("CChat Live Channel", stage_x + 24, 16, 16, (Color){248, 250, 252, 255});
             DrawText("Authenticated as:", stage_x + 24, 36, 12, (Color){148, 163, 184, 255});
             DrawText(auth.username, stage_x + 130, 36, 12, (Color){37, 99, 235, 255});
-
-            Rectangle input_box = {stage_x + 20, sh - 55, stage_w - 100, 40};
-            DrawRectangleRounded(input_box, 0.2, 8, (Color){15, 23, 42, 255});
-            DrawText(strlen(msg_input) > 0 ? msg_input : "Type a message...", input_box.x + 15, input_box.y + 12, 14, strlen(msg_input) > 0 ? (Color){248, 250, 252, 255} : (Color){100, 116, 139, 255});
         }
 
         EndDrawing();

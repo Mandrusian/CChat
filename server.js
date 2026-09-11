@@ -44,8 +44,8 @@ async function seedAccounts() {
 }
 mongoose.connection.once('open', seedAccounts);
 
-// Authentication & Registration Endpoints
-app.post('/api/login', async (req, res) => {
+// Standardized Routes (Support both /login and /api/login)
+const handleLogin = async (req, res) => {
     const { email, password } = req.body;
     const user = await User.findOne({ email });
     if (!user) return res.status(401).json({ success: false, error: "Invalid credentials" });
@@ -54,9 +54,9 @@ app.post('/api/login', async (req, res) => {
     if (!valid) return res.status(401).json({ success: false, error: "Invalid credentials" });
 
     res.json({ success: true, email: user.email, username: user.username });
-});
+};
 
-app.post('/api/register', async (req, res) => {
+const handleRegister = async (req, res) => {
     const { email, password } = req.body;
     const exists = await User.findOne({ email });
     if (exists) return res.status(400).json({ success: false, error: "User exists" });
@@ -64,7 +64,12 @@ app.post('/api/register', async (req, res) => {
     const hash = await bcrypt.hash(password, 10);
     await new User({ email, passwordHash: hash }).save();
     res.json({ success: true });
-});
+};
+
+app.post('/login', handleLogin);
+app.post('/api/login', handleLogin);
+app.post('/register', handleRegister);
+app.post('/api/register', handleRegister);
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
