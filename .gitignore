@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# macOS metadata
+.DS_Store
+**/.DS_Store
+
+# Logs & coverage
+*.log
+npm-debug.log*
+coverage/
+
+# C build artifacts
+*.o
+CChat-Desktop/cchat-desktop
